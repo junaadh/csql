@@ -4,10 +4,9 @@
 #include <stdlib.h>
 
 int main(int argc, char *argv[]) {
-  _(argc);
   char *program = argv[0], *db;
 
-  if (argc > 2) {
+  if (argc >= 2) {
     db = argv[1];
   } else {
     db = DEFAULT_DB_PATH;

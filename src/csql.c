@@ -17,6 +17,34 @@ const uint32_t ROW_SIZE = ID_SIZE + USERNAME_SIZE + EMAIL_SIZE;
 const uint32_t PAGE_SIZE = 4096;
 const uint32_t ROWS_PER_PAGE = PAGE_SIZE / ROW_SIZE;
 const uint32_t TABLE_MAX_ROWS = ROWS_PER_PAGE * TABLE_MAX_PAGES;
+// B-Tree Node Headers
+const uint32_t NODE_TYPE_SIZE = sizeof(uint8_t);
+const uint32_t NODE_TYPE_OFFSET = 0;
+const uint32_t IS_ROOT_SIZE = sizeof(uint8_t);
+const uint32_t IS_ROOT_OFFSET = NODE_TYPE_SIZE;
+const uint32_t PARENT_POINTER_SIZE = sizeof(uint32_t);
+const uint32_t PARENT_POINTER_OFFSET = IS_ROOT_OFFSET + IS_ROOT_SIZE;
+const uint32_t COMMON_NODE_HEADER_SIZE =
+    NODE_TYPE_SIZE + IS_ROOT_SIZE + PARENT_POINTER_SIZE;
+/*
+ * Leaf Node Header Layout
+ */
+const uint32_t LEAF_NODE_NUM_CELLS_SIZE = sizeof(uint32_t);
+const uint32_t LEAF_NODE_NUM_CELLS_OFFSET = COMMON_NODE_HEADER_SIZE;
+const uint32_t LEAF_NODE_HEADER_SIZE =
+    COMMON_NODE_HEADER_SIZE + LEAF_NODE_NUM_CELLS_SIZE;
+/*
+ * Lead Node Body Layout
+ */
+const uint32_t LEAF_NODE_KEY_SIZE = sizeof(uint32_t);
+const uint32_t LEAF_NODE_KEY_OFFSET = 0;
+const uint32_t LEAF_NODE_VALUE_SIZE = ROW_SIZE;
+const uint32_t LEAF_NODE_VALUE_OFFSET =
+    LEAF_NODE_KEY_OFFSET + LEAF_NODE_KEY_SIZE;
+const uint32_t LEAF_NODE_CELL_SIZE = LEAF_NODE_KEY_SIZE + LEAF_NODE_VALUE_SIZE;
+const uint32_t LEAF_NODE_SPACE_FOR_CELLS = PAGE_SIZE - LEAF_NODE_HEADER_SIZE;
+const uint32_t LEAF_NODE_MAX_CELLS =
+    LEAF_NODE_SPACE_FOR_CELLS / LEAF_NODE_CELL_SIZE;
 
 InputBuffer *new_input_buffer() {
   InputBuffer *input_buffer = (InputBuffer *)malloc(sizeof(InputBuffer));
@@ -115,18 +143,21 @@ ExecuteResult execute_insert(Opcode *opcode, Table *table) {
   }
 
   Row *row_buf = &(opcode->insert_buffer);
+  Cursor *cursor = table_end(table);
 
-  serialize_row(row_buf, row_slot(table, table->num_rows));
+  serialize_row(row_buf, cursor_value(cursor));
   table->num_rows += 1;
 
   return EXECUTE_SUCCESS;
 }
 
 ExecuteResult execute_select(Table *table) {
+  Cursor *cursor = table_start(table);
   Row row;
-  for (uint32_t i = 0; i < table->num_rows; ++i) {
-    deserialize_row(row_slot(table, i), &row);
+  while (!(cursor->eot)) {
+    deserialize_row(cursor_value(cursor), &row);
     print_row(&row);
+    cursor_advance(cursor);
   }
   return EXECUTE_SUCCESS;
 }
@@ -143,10 +174,11 @@ void deserialize_row(void *source, Row *destination) {
   memcpy(&(destination->email), source + EMAIL_OFFSET, EMAIL_SIZE);
 }
 
-void *row_slot(Table *table, uint32_t nrows) {
-  uint32_t page_num = nrows / ROWS_PER_PAGE;
-  void *page = get_page(table->pager, page_num);
-  uint32_t row_offset = nrows % ROWS_PER_PAGE;
+void *cursor_value(Cursor *cursor) {
+  uint32_t row_num = cursor->row_num;
+  uint32_t page_num = row_num / ROWS_PER_PAGE;
+  void *page = get_page(cursor->table->pager, page_num);
+  uint32_t row_offset = row_num % ROWS_PER_PAGE;
   uint32_t byte_offset = row_offset * ROW_SIZE;
   return page + byte_offset;
 }
@@ -273,4 +305,27 @@ void *get_page(Pager *pager, uint32_t num_page) {
   }
 
   return pager->pages[num_page];
+}
+
+Cursor *table_start(Table *table) {
+  Cursor *cursor = malloc(sizeof(Cursor));
+  cursor->table = table;
+  cursor->row_num = 0;
+  cursor->eot = (table->num_rows == 0);
+  return cursor;
+}
+
+Cursor *table_end(Table *table) {
+  Cursor *cursor = malloc(sizeof(Cursor));
+  cursor->table = table;
+  cursor->row_num = table->num_rows;
+  cursor->eot = true;
+  return cursor;
+}
+
+void cursor_advance(Cursor *cursor) {
+  cursor->row_num += 1;
+  if (cursor->row_num >= cursor->table->num_rows) {
+    cursor->eot = true;
+  }
 }
